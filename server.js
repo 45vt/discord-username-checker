@@ -13,19 +13,20 @@ app.use(express.static(path.join(__dirname, 'public')));
 const stats = {
   checked: 0,
   available: 0,
-  taken: 0
+  taken: 0,
+  unknown: 0
 };
 
-function validateUsername(username) {
+function validUsername(username) {
   return typeof username === 'string' &&
     /^[a-z0-9]{4}$/.test(username);
 }
 
-async function checkDiscordUsername(username) {
-  if (!validateUsername(username)) {
+async function checkUsername(username) {
+  if (!validUsername(username)) {
     return {
       username,
-      status: 'Invalid',
+      status: 'Unknown',
       checked: false,
       message: 'Enter exactly four letters or numbers.'
     };
@@ -45,21 +46,14 @@ async function checkDiscordUsername(username) {
       }
     );
 
-    if (response.status === 429) {
-      return {
-        username,
-        status: 'Unknown',
-        checked: false,
-        message: 'Discord rate-limited this check. Try again later.'
-      };
-    }
-
     if (!response.ok) {
       return {
         username,
         status: 'Unknown',
         checked: false,
-        message: `Discord did not confirm availability (HTTP ${response.status}).`
+        message: response.status === 429
+          ? 'Discord rate-limited this check. Try again later.'
+          : `Discord did not confirm the result (HTTP ${response.status}).`
       };
     }
 
@@ -70,19 +64,28 @@ async function checkDiscordUsername(username) {
         username,
         status: 'Unknown',
         checked: false,
-        message: 'Discord returned an unrecognized response.'
+        message: 'Discord returned no clear availability result.'
       };
     }
 
     stats.checked++;
-    if (data.taken) stats.taken++;
-    else stats.available++;
 
+    if (data.taken) {
+      stats.taken++;
+      return {
+        username,
+        status: 'Taken',
+        checked: true,
+        available: false
+      };
+    }
+
+    stats.available++;
     return {
       username,
-      status: data.taken ? 'Taken' : 'Available',
+      status: 'Available',
       checked: true,
-      available: !data.taken
+      available: true
     };
   } catch (error) {
     return {
@@ -99,49 +102,32 @@ async function checkDiscordUsername(username) {
 }
 
 app.post('/api/check', async (req, res) => {
-  try {
-    const result = await checkDiscordUsername(req.body?.username);
-    res.status(result.status === 'Invalid' ? 400 : 200).json(result);
-  } catch {
-    res.status(500).json({ status: 'Unknown', message: 'Server error.' });
-  }
+  const result = await checkUsername(req.body?.username);
+  res.json(result);
 });
 
 app.post('/api/check-bulk', async (req, res) => {
-  const { usernames } = req.body || {};
+  const usernames = req.body?.usernames;
 
   if (!Array.isArray(usernames) || usernames.length !== 1) {
     return res.status(400).json({
-      error: 'Submit exactly one username per request.'
+      error: 'Check one username per request.'
     });
   }
 
-  try {
-    const result = await checkDiscordUsername(usernames[0]);
-    res.status(result.status === 'Invalid' ? 400 : 200).json({
-      results: [result]
-    });
-  } catch {
-    res.status(500).json({ error: 'Server error.' });
-  }
+  const result = await checkUsername(usernames[0]);
+  res.json({ results: [result] });
 });
 
 app.get('/api/stats', (req, res) => {
   res.json(stats);
 });
 
-app.post('/api/reset-stats', (req, res) => {
-  stats.checked = 0;
-  stats.available = 0;
-  stats.taken = 0;
-  res.json({ message: 'Statistics reset', stats });
-});
-
 app.get('/api', (req, res) => {
   res.json({
     name: 'CharFinder API',
     status: 'online',
-    availabilityChecking: 'unofficial-endpoint'
+    rule: 'Only explicit boolean responses are classified.'
   });
 });
 
@@ -150,5 +136,5 @@ app.get('/', (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`CharFinder API running on port ${PORT}`);
+  console.log(`CharFinder running on port ${PORT}`);
 });
