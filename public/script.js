@@ -1,144 +1,167 @@
 // API Configuration
 
 const API_BASE = 'https://charfinder-api.onrender.com/api';
+const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 const $ = id => document.getElementById(id);
-const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
 let isChecking = false;
-
-const startBtn = $('startBtn');
-const startLetter = $('startLetter');
-const checkedEl = $('checkedCount');
-const availableEl = $('availableCount');
-const takenEl = $('takenCount');
-const percentageEl = $('percentage');
-const resultsList = $('resultsList');
-const placeholder = $('resultsPlaceholder');
-const statusEl = $('checkingStatus');
 
 let stats = { checked: 0, available: 0, taken: 0 };
 
+function setText(id, value) {
+    const element = $(id);
+    if (element) element.textContent = value;
+}
+
 function generateUsernames(count = 500) {
-    const results = new Set();
-    while (results.size < count) {
+    const names = new Set();
+
+    while (names.size < count) {
         let name = '';
         for (let i = 0; i < 4; i++) {
             name += alphabet[Math.floor(Math.random() * alphabet.length)];
         }
-        results.add(name);
+        names.add(name);
     }
-    return [...results];
+
+    return [...names];
 }
 
 function updateStats() {
-    checkedEl.textContent = stats.checked;
-    availableEl.textContent = stats.available;
-    takenEl.textContent = stats.taken;
-    percentageEl.textContent = stats.checked
-        ? ((stats.available / stats.checked) * 100).toFixed(2) + '%'
-        : '0%';
+    setText('checkedCount', stats.checked);
+    setText('availableCount', stats.available);
+    setText('takenCount', stats.taken);
+    setText(
+        'percentage',
+        stats.checked
+            ? ((stats.available / stats.checked) * 100).toFixed(2) + '%'
+            : '0%'
+    );
 }
 
-function addResult(name) {
-    const item = document.createElement('div');
-    item.className = 'result-item';
-    item.textContent = name;
-    resultsList.appendChild(item);
+function showStatus(message) {
+    setText('checkingStatus', message);
 }
 
 async function handleStartChecking() {
-    if (isChecking) return;
+    const button = $('startBtn');
+
+    if (isChecking || !button) return;
 
     isChecking = true;
-    startBtn.disabled = true;
-    startBtn.textContent = 'CHECKING...';
-    statusEl.textContent = 'Generating usernames...';
-    resultsList.replaceChildren();
-    placeholder.style.display = 'none';
-    stats = { checked: 0, available: 0, taken: 0 };
-    updateStats();
+    button.disabled = true;
+    button.textContent = 'WORKING...';
 
     try {
+        stats = { checked: 0, available: 0, taken: 0 };
+        updateStats();
+
+        const list = $('resultsList');
+        if (list) list.replaceChildren();
+
+        const placeholder = $('resultsPlaceholder');
+        if (placeholder) placeholder.style.display = 'none';
+
+        showStatus('Generating candidates...');
+
         let names = generateUsernames(500);
-        const letter = startLetter.value;
-        if (letter) names = names.filter(n => n.startsWith(letter));
+        const letter = $('startLetter')?.value || '';
 
-        statusEl.textContent = `Generated ${names.length} candidates. Checking API...`;
-console.log("Candidates generated:", names.length);
+        if (letter) {
+            names = names.filter(name => name.startsWith(letter.toLowerCase()));
+        }
 
-        for (const username of names) {
-            if (!isChecking) break;
+        showStatus(`Generated ${names.length} candidates. Testing API...`);
 
-            try {
-                const response = await fetch(`${API_BASE}/check`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username })
-                });
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 10000);
 
-                if (!response.ok) continue;
-                const result = await response.json();
+        try {
+            const response = await fetch(`${API_BASE}/check`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: names[0] }),
+                signal: controller.signal
+            });
 
-                if (result.checked === true) {
-                    stats.checked++;
-                    if (result.available === true) {
-                        stats.available++;
-                        addResult(username);
-                    } else {
-                        stats.taken++;
-                    }
-                    updateStats();
-                }
-            } catch (error) {
-                console.error('API check failed:', error);
-                statusEl.textContent = 'API check failed. Check the backend route.';
-                break;
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.message || result.error || 'API request failed');
             }
 
-            await new Promise(resolve => setTimeout(resolve, 250));
+            if (result.status === 'Unknown' || result.checked === false) {
+                showStatus(
+                    `Generator works! API is online, but real Discord checking isn't configured. Test candidate: ${names[0]}`
+                );
+            } else {
+                showStatus(
+                    `API responded for ${names[0]}. Verify its result before trusting availability.`
+                );
+            }
+        } finally {
+            clearTimeout(timeout);
         }
-
-        if (isChecking) {
-            statusEl.textContent = `Finished. Checked ${stats.checked} results.`;
-        }
+    } catch (error) {
+        showStatus(
+            error.name === 'AbortError'
+                ? 'API timed out. Try again in a moment.'
+                : `Could not check API: ${error.message}`
+        );
     } finally {
         isChecking = false;
-        startBtn.disabled = false;
-        startBtn.textContent = 'START CHECKING';
+
+        const button = $('startBtn');
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'START CHECKING';
+        }
     }
 }
 
 async function loadStats() {
     try {
         const response = await fetch(`${API_BASE}/stats`);
+
         if (!response.ok) return;
+
         const data = await response.json();
+
         stats = {
             checked: Number(data.checked) || 0,
             available: Number(data.available) || 0,
             taken: Number(data.taken) || 0
         };
+
         updateStats();
-    } catch (error) {
-        console.log('Stats endpoint unavailable.');
+    } catch {
+        showStatus('API statistics unavailable. You can still generate candidates.');
     }
 }
 
-const saveWebhookBtn = document.querySelector('.btn-save');
-if (startBtn) startBtn.addEventListener('click', handleStartChecking);
-if (saveWebhookBtn) {
-    saveWebhookBtn.addEventListener('click', () => {
-        const input = $('webhook');
-        if (input && input.value.trim()) {
-            localStorage.setItem('discordWebhook', input.value.trim());
+document.addEventListener('DOMContentLoaded', () => {
+    const button = $('startBtn');
+
+    if (button) {
+        button.addEventListener('click', handleStartChecking);
+    } else {
+        console.error('Could not find the startBtn element in index.html');
+    }
+
+    const webhook = $('webhook');
+    const saveButton = document.querySelector('.btn-save');
+
+    if (webhook) {
+        webhook.value = localStorage.getItem('discordWebhook') || '';
+    }
+
+    if (saveButton && webhook) {
+        saveButton.addEventListener('click', () => {
+            localStorage.setItem('discordWebhook', webhook.value.trim());
             alert('Webhook saved locally.');
-        }
-    });
-}
+        });
+    }
 
-const webhookInput = $('webhook');
-if (webhookInput) {
-    webhookInput.value = localStorage.getItem('discordWebhook') || '';
-}
+    loadStats();
+});
 
-loadStats();
