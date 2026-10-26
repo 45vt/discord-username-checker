@@ -1,151 +1,194 @@
 
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
+const API_BASE = 'https://charfinder-api.onrender.com/api';
+const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+const $ = id => document.getElementById(id);
+let isChecking = false;
 
-app.use(cors());
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
-
-const stats = {
-  checked: 0,
-  available: 0,
-  taken: 0
+let stats = {
+    checked: 0,
+    available: 0,
+    taken: 0
 };
 
-function validateUsername(username) {
-  return typeof username === 'string' &&
-    /^[a-z0-9]{4}$/.test(username);
+function setText(id, value) {
+    const element = $(id);
+    if (element) element.textContent = value;
 }
 
-async function checkDiscordUsername(username) {
-  if (!validateUsername(username)) {
-    return {
-      username,
-      status: 'Invalid',
-      checked: false,
-      message: 'Enter exactly four letters or numbers.'
-    };
-  }
+function generateUsernames(count = 500) {
+    const names = new Set();
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+    while (names.size < count) {
+        let name = '';
 
-  try {
-    const response = await fetch(
-      'https://discord.com/api/v9/unique-username/username-attempt-unauthed',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username }),
-        signal: controller.signal
-      }
-    );
+        for (let i = 0; i < 4; i++) {
+            name += alphabet[Math.floor(Math.random() * alphabet.length)];
+        }
 
-    if (response.status === 429) {
-      return {
-        username,
-        status: 'Unknown',
-        checked: false,
-        message: 'Discord rate-limited this check. Try again later.'
-      };
+        names.add(name);
     }
+
+    return [...names];
+}
+
+function updateStats() {
+    setText('checkedCount', stats.checked);
+    setText('availableCount', stats.available);
+    setText('takenCount', stats.taken);
+
+    setText(
+        'percentage',
+        stats.checked
+            ? ((stats.available / stats.checked) * 100).toFixed(2) + '%'
+            : '0%'
+    );
+}
+
+function showStatus(message) {
+    setText('checkingStatus', message);
+}
+
+async function checkUsername(username) {
+    const response = await fetch(`${API_BASE}/check`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ username })
+    });
+
+    const result = await response.json();
 
     if (!response.ok) {
-      return {
-        username,
-        status: 'Unknown',
-        checked: false,
-        message: `Discord did not confirm availability (HTTP ${response.status}).`
-      };
+        throw new Error(result.message || result.error || 'API request failed');
     }
 
-    const data = await response.json();
-
-    if (typeof data.taken !== 'boolean') {
-      return {
-        username,
-        status: 'Unknown',
-        checked: false,
-        message: 'Discord returned an unrecognized response.'
-      };
-    }
-
-    stats.checked++;
-
-    if (data.taken) {
-      stats.taken++;
-    } else {
-      stats.available++;
-    }
-
-    return {
-      username,
-      status: data.taken ? 'Taken' : 'Available',
-      checked: true,
-      available: !data.taken
-    };
-  } catch (error) {
-    return {
-      username,
-      status: 'Unknown',
-      checked: false,
-      message: error.name === 'AbortError'
-        ? 'Discord check timed out.'
-        : 'Could not reach Discord.'
-    };
-  } finally {
-    clearTimeout(timeout);
-  }
+    return result;
 }
 
-app.post('/api/check', async (req, res) => {
-  const result = await checkDiscordUsername(req.body?.username);
-  res.status(result.status === 'Invalid' ? 400 : 200).json(result);
-});
+async function handleStartChecking() {
+    const button = $('startBtn');
 
-app.post('/api/check-bulk', async (req, res) => {
-  const { usernames } = req.body || {};
+    if (isChecking || !button) return;
 
-  if (!Array.isArray(usernames) || usernames.length !== 1) {
-    return res.status(400).json({
-      error: 'Submit exactly one username per request.'
-    });
-  }
+    isChecking = true;
+    button.disabled = true;
+    button.textContent = 'CHECKING...';
 
-  const result = await checkDiscordUsername(usernames[0]);
+    try {
+        stats = { checked: 0, available: 0, taken: 0 };
+        updateStats();
 
-  res.status(result.status === 'Invalid' ? 400 : 200).json({
-    results: [result]
-  });
-});
+        const list = $('resultsList');
 
-app.get('/api/stats', (req, res) => {
-  res.json(stats);
-});
+        if (list) list.replaceChildren();
 
-app.post('/api/reset-stats', (req, res) => {
-  stats.checked = 0;
-  stats.available = 0;
-  stats.taken = 0;
-  res.json({ message: 'Statistics reset', stats });
-});
+        const placeholder = $('resultsPlaceholder');
 
-app.get('/api', (req, res) => {
-  res.json({
-    name: 'CharFinder API',
-    status: 'online',
-    availabilityChecking: 'unofficial-endpoint'
-  });
-});
+        if (placeholder) placeholder.style.display = 'none';
 
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+        showStatus('Generating candidates...');
 
-app.listen(PORT, () => {
-  console.log(`CharFinder API running on port ${PORT}`);
+        let names = generateUsernames(500);
+        const letter = $('startLetter')?.value?.trim().toLowerCase() || '';
+
+        if (letter) {
+            names = names.filter(name => name.startsWith(letter));
+        }
+
+        if (names.length === 0) {
+            showStatus('No candidates match that starting letter.');
+            return;
+        }
+
+        // Check one candidate per click.
+        const username = names[0];
+
+        showStatus(`Checking ${username} with Discord...`);
+
+        const result = await checkUsername(username);
+
+        if (result.status === 'Available' || result.status === 'Taken') {
+            stats.checked++;
+
+            if (result.status === 'Available') {
+                stats.available++;
+            } else {
+                stats.taken++;
+            }
+
+            updateStats();
+            showStatus(`${username}: ${result.status}`);
+
+            if (list) {
+                const item = document.createElement('div');
+                item.textContent = `${username} — ${result.status}`;
+                list.appendChild(item);
+            }
+        } else {
+            showStatus(
+                `${username}: Unknown — ${
+                    result.message || 'Discord did not confirm availability.'
+                }`
+            );
+        }
+    } catch (error) {
+        showStatus(`Checker error: ${error.message}`);
+    } finally {
+        isChecking = false;
+
+        const button = $('startBtn');
+
+        if (button) {
+            button.disabled = false;
+            button.textContent = 'START CHECKING';
+        }
+    }
+}
+
+async function loadStats() {
+    try {
+        const response = await fetch(`${API_BASE}/stats`);
+
+        if (!response.ok) return;
+
+        const data = await response.json();
+
+        stats = {
+            checked: Number(data.checked) || 0,
+            available: Number(data.available) || 0,
+            taken: Number(data.taken) || 0
+        };
+
+        updateStats();
+    } catch {
+        showStatus('Could not load statistics.');
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    const button = $('startBtn');
+
+    if (button) {
+        button.addEventListener('click', handleStartChecking);
+    } else {
+        console.error('Could not find startBtn in index.html');
+    }
+
+    const webhook = $('webhook');
+    const saveButton = document.querySelector('.btn-save');
+
+    if (webhook) {
+        webhook.value = localStorage.getItem('discordWebhook') || '';
+    }
+
+    if (saveButton && webhook) {
+        saveButton.addEventListener('click', () => {
+            localStorage.setItem('discordWebhook', webhook.value.trim());
+            alert('Webhook saved locally.');
+        });
+    }
+
+    loadStats();
 });
