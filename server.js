@@ -16,14 +16,11 @@ const stats = {
   taken: 0
 };
 
-// Validate candidate format; this does not establish availability.
 function validateUsername(username) {
   return typeof username === 'string' &&
     /^[a-z0-9]{4}$/.test(username);
 }
 
-// No verified Discord availability endpoint is configured.
-// Return Unknown rather than guessing.
 async function checkDiscordUsername(username) {
   if (!validateUsername(username)) {
     return {
@@ -34,12 +31,75 @@ async function checkDiscordUsername(username) {
     };
   }
 
-  return {
-    username,
-    status: 'Unknown',
-    checked: false,
-    message: 'A verified Discord availability check is not configured.'
-  };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(
+      'https://discord.com/api/v9/unique-username/username-attempt-unauthed',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username }),
+        signal: controller.signal
+      }
+    );
+
+    if (response.status === 429) {
+      return {
+        username,
+        status: 'Unknown',
+        checked: false,
+        message: 'Discord rate-limited this check. Try again later.'
+      };
+    }
+
+    if (!response.ok) {
+      return {
+        username,
+        status: 'Unknown',
+        checked: false,
+        message: `Discord did not confirm availability (HTTP ${response.status}).`
+      };
+    }
+
+    const data = await response.json();
+
+    if (typeof data.taken !== 'boolean') {
+      return {
+        username,
+        status: 'Unknown',
+        checked: false,
+        message: 'Discord returned an unrecognized response.'
+      };
+    }
+
+    stats.checked++;
+
+    if (data.taken) {
+      stats.taken++;
+    } else {
+      stats.available++;
+    }
+
+    return {
+      username,
+      status: data.taken ? 'Taken' : 'Available',
+      checked: true,
+      available: !data.taken
+    };
+  } catch (error) {
+    return {
+      username,
+      status: 'Unknown',
+      checked: false,
+      message: error.name === 'AbortError'
+        ? 'Discord check timed out.'
+        : 'Could not reach Discord.'
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 app.post('/api/check', async (req, res) => {
@@ -61,20 +121,6 @@ app.post('/api/check-bulk', async (req, res) => {
   res.status(result.status === 'Invalid' ? 400 : 200).json({
     results: [result]
   });
-}
-  }
-
-  if (usernames.length > 100) {
-    return res.status(400).json({
-      error: 'Maximum 100 usernames per request.'
-    });
-  }
-
-  const results = await Promise.all(
-    usernames.map(checkDiscordUsername)
-  );
-
-  res.json({ results });
 });
 
 app.get('/api/stats', (req, res) => {
@@ -92,7 +138,7 @@ app.get('/api', (req, res) => {
   res.json({
     name: 'CharFinder API',
     status: 'online',
-    availabilityChecking: 'not-configured'
+    availabilityChecking: 'unofficial-endpoint'
   });
 });
 
