@@ -23,7 +23,24 @@ let stats = {
 };
 
 // Expanded usernames for demonstration
-const sampleUsernames = [
+const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+const sampleUsernames = [];
+const seenUsernames = new Set();
+
+while (sampleUsernames.length < 500) {
+    let username = '';
+
+    for (let i = 0; i < 4; i++) {
+        username += alphabet[
+            Math.floor(Math.random() * alphabet.length)
+        ];
+    }
+
+    if (!seenUsernames.has(username)) {
+        seenUsernames.add(username);
+        sampleUsernames.push(username);
+    }
+}
     // A-Z single letters
     'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 
     'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z',
