@@ -1,167 +1,81 @@
 // API Configuration
 
 const API_BASE = 'https://charfinder-api.onrender.com/api';
-const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 const $ = id => document.getElementById(id);
 let isChecking = false;
 
-let stats = { checked: 0, available: 0, taken: 0 };
+async function checkUsername(username) {
+  const response = await fetch(`${API_BASE}/check`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username })
+  });
 
-function setText(id, value) {
-    const element = $(id);
-    if (element) element.textContent = value;
-}
+  const result = await response.json();
 
-function generateUsernames(count = 500) {
-    const names = new Set();
+  if (!response.ok) {
+    throw new Error(result.message || result.error || `HTTP ${response.status}`);
+  }
 
-    while (names.size < count) {
-        let name = '';
-        for (let i = 0; i < 4; i++) {
-            name += alphabet[Math.floor(Math.random() * alphabet.length)];
-        }
-        names.add(name);
-    }
-
-    return [...names];
-}
-
-function updateStats() {
-    setText('checkedCount', stats.checked);
-    setText('availableCount', stats.available);
-    setText('takenCount', stats.taken);
-    setText(
-        'percentage',
-        stats.checked
-            ? ((stats.available / stats.checked) * 100).toFixed(2) + '%'
-            : '0%'
-    );
-}
-
-function showStatus(message) {
-    setText('checkingStatus', message);
+  return result;
 }
 
 async function handleStartChecking() {
-    const button = $('startBtn');
+  const button = $('startBtn');
+  const status = $('checkingStatus');
+  const list = $('resultsList');
 
-    if (isChecking || !button) return;
+  if (isChecking || !button) return;
 
-    isChecking = true;
-    button.disabled = true;
-    button.textContent = 'WORKING...';
+  const firstLetter = $('startLetter')?.value?.trim().toLowerCase() || '';
 
-    try {
-        stats = { checked: 0, available: 0, taken: 0 };
-        updateStats();
+  if (firstLetter && !/^[a-z0-9]$/.test(firstLetter)) {
+    if (status) status.textContent = 'Enter one letter or number.';
+    return;
+  }
 
-        const list = $('resultsList');
-        if (list) list.replaceChildren();
+  const username = firstLetter
+    ? firstLetter + Math.random().toString(36).slice(2, 5)
+    : Math.random().toString(36).slice(2, 6);
 
-        const placeholder = $('resultsPlaceholder');
-        if (placeholder) placeholder.style.display = 'none';
+  isChecking = true;
+  button.disabled = true;
+  button.textContent = 'CHECKING...';
 
-        showStatus('Generating candidates...');
+  if (status) status.textContent = `Checking ${username}...`;
 
-        let names = generateUsernames(500);
-        const letter = $('startLetter')?.value || '';
+  try {
+    const result = await checkUsername(username);
 
-        if (letter) {
-            names = names.filter(name => name.startsWith(letter.toLowerCase()));
-        }
-
-        showStatus(`Generated ${names.length} candidates. Testing API...`);
-
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), 10000);
-
-        try {
-            const response = await fetch(`${API_BASE}/check`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ username: names[0] }),
-                signal: controller.signal
-            });
-
-            const result = await response.json();
-
-            if (!response.ok) {
-                throw new Error(result.message || result.error || 'API request failed');
-            }
-
-            if (result.status === 'Unknown' || result.checked === false) {
-                showStatus(
-                    `Generator works! API is online, but real Discord checking isn't configured. Test candidate: ${names[0]}`
-                );
-            } else {
-                showStatus(
-                    `API responded for ${names[0]}. Verify its result before trusting availability.`
-                );
-            }
-        } finally {
-            clearTimeout(timeout);
-        }
-    } catch (error) {
-        showStatus(
-            error.name === 'AbortError'
-                ? 'API timed out. Try again in a moment.'
-                : `Could not check API: ${error.message}`
-        );
-    } finally {
-        isChecking = false;
-
-        const button = $('startBtn');
-        if (button) {
-            button.disabled = false;
-            button.textContent = 'START CHECKING';
-        }
+    if (status) {
+      status.textContent = result.checked
+        ? `${username}: ${result.status}`
+        : `${username}: Unknown — ${result.message || 'Discord did not confirm.'}`;
     }
-}
 
-async function loadStats() {
-    try {
-        const response = await fetch(`${API_BASE}/stats`);
-
-        if (!response.ok) return;
-
-        const data = await response.json();
-
-        stats = {
-            checked: Number(data.checked) || 0,
-            available: Number(data.available) || 0,
-            taken: Number(data.taken) || 0
-        };
-
-        updateStats();
-    } catch {
-        showStatus('API statistics unavailable. You can still generate candidates.');
+    if (list) {
+      const item = document.createElement('div');
+      item.textContent = `${username} — ${result.status}`;
+      list.prepend(item);
     }
+  } catch (error) {
+    if (status) status.textContent = `Checker error: ${error.message}`;
+  } finally {
+    isChecking = false;
+    button.disabled = false;
+    button.textContent = 'START CHECKING';
+  }
 }
 
 document.addEventListener('DOMContentLoaded', () => {
-    const button = $('startBtn');
+  const button = $('startBtn');
 
-    if (button) {
-        button.addEventListener('click', handleStartChecking);
-    } else {
-        console.error('Could not find the startBtn element in index.html');
-    }
-
-    const webhook = $('webhook');
-    const saveButton = document.querySelector('.btn-save');
-
-    if (webhook) {
-        webhook.value = localStorage.getItem('discordWebhook') || '';
-    }
-
-    if (saveButton && webhook) {
-        saveButton.addEventListener('click', () => {
-            localStorage.setItem('discordWebhook', webhook.value.trim());
-            alert('Webhook saved locally.');
-        });
-    }
-
-    loadStats();
+  if (button) {
+    button.addEventListener('click', handleStartChecking);
+  } else {
+    console.error('CharFinder: startBtn not found in index.html');
+  }
 });
+
 
