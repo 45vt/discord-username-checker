@@ -64,6 +64,7 @@ async function handleStartChecking() {
         if (letter) names = names.filter(n => n.startsWith(letter));
 
         statusEl.textContent = `Generated ${names.length} candidates. Checking API...`;
+console.log("Candidates generated:", names.length);
 
         for (const username of names) {
             if (!isChecking) break;
