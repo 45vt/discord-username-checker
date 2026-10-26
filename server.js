@@ -61,7 +61,7 @@ app.post('/api/check-bulk', async (req, res) => {
   res.status(result.status === 'Invalid' ? 400 : 200).json({
     results: [result]
   });
-});
+}
   }
 
   if (usernames.length > 100) {
