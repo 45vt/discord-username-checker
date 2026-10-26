@@ -50,10 +50,18 @@ app.post('/api/check', async (req, res) => {
 app.post('/api/check-bulk', async (req, res) => {
   const { usernames } = req.body || {};
 
-  if (!Array.isArray(usernames) || usernames.length === 0) {
+  if (!Array.isArray(usernames) || usernames.length !== 1) {
     return res.status(400).json({
-      error: 'Provide a non-empty usernames array.'
+      error: 'Submit exactly one username per request.'
     });
+  }
+
+  const result = await checkDiscordUsername(usernames[0]);
+
+  res.status(result.status === 'Invalid' ? 400 : 200).json({
+    results: [result]
+  });
+});
   }
 
   if (usernames.length > 100) {
