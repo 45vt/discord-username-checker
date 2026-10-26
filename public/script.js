@@ -1,5 +1,5 @@
 // API Configuration
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = 'https://charfinder-api.onrender.com/api';
 
 // DOM Elements
 const startBtn = document.getElementById('startBtn');
